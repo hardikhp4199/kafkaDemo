@@ -1,0 +1,110 @@
+package main
+
+import (
+	"bufio"
+	"fmt"
+	"os"
+	"strconv"
+
+	"github.com/confluentinc/confluent-kafka-go/kafka"
+)
+
+const topicName = "go_training_hardik"
+const hostURL = "192.168.26.10:9092"
+
+func main() {
+	fmt.Println("****************************")
+	fmt.Println("1) Cousumer")
+	fmt.Println("2) Producer")
+	fmt.Println("3) Exit")
+	fmt.Println("****************************")
+	choice, _ := ScanIntergerValue("Please enter valid choice")
+	switch choice {
+	case 1:
+		CounsumerFunc()
+	case 2:
+		ProducerFunc()
+	case 3:
+		os.Exit(1)
+
+	default:
+		fmt.Println("Not found..!")
+	}
+}
+
+//scan the user integer value and  validate then return
+func ScanIntergerValue(errorMessage string) (int, error) {
+	scanner := bufio.NewScanner(os.Stdin)
+	for {
+		if scanner.Scan() {
+			_, err := strconv.Atoi(scanner.Text())
+			if err != nil {
+				fmt.Println(errorMessage)
+			} else {
+				break
+			}
+		}
+	}
+	return strconv.Atoi(scanner.Text())
+}
+
+func CounsumerFunc() {
+
+	c, err := kafka.NewConsumer(&kafka.ConfigMap{
+		"bootstrap.servers": hostURL,
+		"group.id":          "hp1",
+		"auto.offset.reset": "earliest",
+	})
+
+	if err != nil {
+		panic(err)
+	}
+
+	c.SubscribeTopics([]string{topicName}, nil)
+
+	for {
+		msg, err := c.ReadMessage(-1)
+		if err == nil {
+			fmt.Printf("Message on %s: %s\n", msg.TopicPartition, string(msg.Value))
+		} else {
+			// The client will automatically try to recover from all errors.
+			fmt.Printf("Consumer error: %v (%v)\n", err, msg)
+		}
+	}
+
+	c.Close()
+}
+
+func ProducerFunc() {
+	p, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": hostURL})
+	if err != nil {
+		panic(err)
+	}
+
+	defer p.Close()
+
+	go func() {
+		for e := range p.Events() {
+			switch ev := e.(type) {
+			case *kafka.Message:
+				if ev.TopicPartition.Error != nil {
+					fmt.Printf("Delivery failed: %v\n", ev.TopicPartition)
+				} else {
+					fmt.Printf("Delivered message to %v\n", ev.TopicPartition)
+				}
+			}
+		}
+	}()
+
+	// Produce messages to topic (asynchronously)
+	topic := topicName
+	for _, word := range []string{"CUST_121212", "CUST_123456", "CUST_232323", "CUST_454545", "CUST_858585"} {
+		p.Produce(&kafka.Message{
+			TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
+			Value:          []byte(word),
+		}, nil)
+	}
+
+	// Wait for message deliveries before shutting down
+	p.Flush(15 * 1000)
+}
